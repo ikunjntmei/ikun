@@ -1,0 +1,39 @@
+name: Build Debian 12 DD Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      root_password:
+        description: '设置 root 初始密码'
+        required: true
+        default: 'abc123456'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 赋予构建脚本权限并执行
+        run: |
+          chmod +x build.sh
+          sudo DEFAULT_PASS="${{ github.event.inputs.root_password }}" ./build.sh
+
+      - name: 发布镜像至 GitHub Releases
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: debian12-${{ github.run_id }}
+          name: Debian 12 DD Image (Release ${{ github.run_id }})
+          body: |
+            ### 镜像信息
+            - 系统：Debian 12 Bookworm
+            - 引导：UEFI + BIOS 双模
+            - 用户：`root`
+            - 密码：`${{ github.event.inputs.root_password }}`
+          files: debian12-amd64.img.xz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
