@@ -25,9 +25,10 @@ jobs:
           ROOT_PASS="${{ github.event.inputs.root_password }}"
           TARGET_DIR="/mnt/target"
 
-          echo "=== 1. 安装构建依赖 ==="
+          echo "=== 1. 安装构建依赖及 Debian GPG 证书 ==="
           sudo apt-get update -y
-          sudo apt-get install -y debootstrap parted dosfstools e2fsprogs xz-utils kpartx grub-pc-bin grub-efi-amd64-bin curl
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            debootstrap debian-archive-keyring parted dosfstools e2fsprogs xz-utils kpartx grub-pc-bin grub-efi-amd64-bin curl
 
           echo "=== 2. 创建 2.5GB 虚拟磁盘并规划 UEFI+BIOS 分区 ==="
           dd if=/dev/zero of=${IMAGE_NAME} bs=1M count=2560
@@ -59,6 +60,8 @@ jobs:
           echo "=== 4. 进入 chroot 配置系统 ==="
           sudo chroot ${TARGET_DIR} /bin/bash << EOF
           set -e
+          export DEBIAN_FRONTEND=noninteractive
+          export DEBCONF_NONINTERACTIVE_SEEN=true
 
           cat << 'SOURCES' > /etc/apt/sources.list
           deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
@@ -66,12 +69,12 @@ jobs:
           deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
           SOURCES
 
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          apt-get update -y
+          apt-get install -y --no-install-recommends \
             linux-image-cloud-amd64 grub-pc grub-efi-amd64 openssh-server \
             systemd-networkd systemd-resolved cloud-guest-utils curl
 
-          # 注入 AWS ENA / VirtIO / NVMe 驱动模块
+          # 注入关键驱动模块
           cat << 'MODULES' >> /etc/initramfs-tools/modules
           nvme
           xen-blkfront
@@ -97,7 +100,7 @@ jobs:
           systemctl enable systemd-networkd
           systemctl enable systemd-resolved
 
-          # 挂载表（使用卷标与自动探测，避免硬件设备名冲突）
+          # 挂载表
           cat << 'FSTAB' > /etc/fstab
           LABEL=ROOTFS    /           ext4    defaults,noatime    0 1
           FSTAB
@@ -121,7 +124,7 @@ jobs:
           cp /boot/efi/EFI/debian/grubx64.efi /boot/efi/EFI/boot/bootx64.efi
           update-grub
 
-          # 首次开机自动扩容磁盘服务
+          # 开机自动扩容根磁盘服务
           cat << 'EXPAND' > /etc/systemd/system/expand-root.service
           [Unit]
           Description=Expand root partition on first boot
@@ -157,7 +160,7 @@ jobs:
             ### 镜像构建信息
             - 系统版本：Debian 12 (Bookworm)
             - 启动模式：UEFI + BIOS 双模
-            - 驱动适配：AWS ENA / NVMe / KVM VirtIO
+            - 适配硬件：AWS ENA / NVMe / KVM VirtIO
             - 登录用户名：`root`
             - 初始密码：`${{ github.event.inputs.root_password }}`
           files: debian12-amd64.img.xz
