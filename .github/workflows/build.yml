@@ -70,12 +70,12 @@ jobs:
           SOURCES
 
           apt-get update -y
-          # 注意：systemd-networkd 已内建在 systemd，此处仅安装 systemd-resolved
+          # 使用 grub-efi-amd64 与 grub-pc-bin 搭配，彻底规避冲突
           apt-get install -y --no-install-recommends \
-            linux-image-cloud-amd64 grub-pc grub-efi-amd64 openssh-server \
+            linux-image-cloud-amd64 grub-efi-amd64 grub-pc-bin openssh-server \
             systemd-resolved cloud-guest-utils curl
 
-          # 注入关键驱动模块
+          # 注入关键驱动模块至 Initramfs
           cat << 'MODULES' >> /etc/initramfs-tools/modules
           nvme
           xen-blkfront
@@ -90,7 +90,7 @@ jobs:
           sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/g' /etc/ssh/sshd_config
           sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/g' /etc/ssh/sshd_config
 
-          # 全网卡自动 DHCP 联网配置并启用服务
+          # 全网卡自动 DHCP 联网配置
           cat << 'NET' > /etc/systemd/network/10-dhcp.network
           [Match]
           Name=en* eth*
@@ -119,7 +119,7 @@ jobs:
           GRUB
 
           # 写入 Legacy BIOS 与 UEFI 双模引导
-          grub-install --target=i386-pc --recheck ${LOOP_DEV}
+          grub-install --target=i386-pc --modules="part_gpt biosdisk ext2" --recheck ${LOOP_DEV}
           grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck --no-nvram
           mkdir -p /boot/efi/EFI/boot
           cp /boot/efi/EFI/debian/grubx64.efi /boot/efi/EFI/boot/bootx64.efi
@@ -161,7 +161,7 @@ jobs:
             ### 镜像构建信息
             - 系统版本：Debian 12 (Bookworm)
             - 启动模式：UEFI + BIOS 双模
-            - 适配硬件：AWS ENA / NVMe / KVM VirtIO
+            - 驱动适配：AWS ENA / NVMe / KVM VirtIO
             - 登录用户名：`root`
             - 初始密码：`${{ github.event.inputs.root_password }}`
           files: debian12-amd64.img.xz
