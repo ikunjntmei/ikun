@@ -70,10 +70,10 @@ jobs:
           SOURCES
 
           apt-get update -y
-          # 使用 grub-efi-amd64 与 grub-pc-bin 搭配，彻底规避冲突
+          # 补充 fdisk、gdisk 确保 growpart 底层支持 GPT 分区表扩容
           apt-get install -y --no-install-recommends \
             linux-image-cloud-amd64 grub-efi-amd64 grub-pc-bin openssh-server \
-            systemd-resolved cloud-guest-utils curl
+            systemd-resolved cloud-guest-utils fdisk gdisk curl
 
           # 注入关键驱动模块至 Initramfs
           cat << 'MODULES' >> /etc/initramfs-tools/modules
@@ -125,21 +125,35 @@ jobs:
           cp /boot/efi/EFI/debian/grubx64.efi /boot/efi/EFI/boot/bootx64.efi
           update-grub
 
-          # 开机自动扩容根磁盘服务
-          cat << 'EXPAND' > /etc/systemd/system/expand-root.service
+          # 单独创建开机扩容脚本，避免转义错误
+          cat << 'EXPAND_SH' > /usr/local/bin/auto-resize.sh
+          #!/usr/bin/env bash
+          ROOT_DEV=\$(findmnt -n -o SOURCE /)
+          DISK=\$(lsblk -ndo PKNAME "\$ROOT_DEV" 2>/dev/null || echo "\$ROOT_DEV" | sed -r 's/p?[0-9]+$//')
+          PART=\$(echo "\$ROOT_DEV" | grep -o '[0-9]*$')
+          DISK="/dev/\${DISK#/dev/}"
+
+          growpart "\$DISK" "\$PART" || true
+          resize2fs "\$ROOT_DEV" || true
+          systemctl disable auto-resize.service
+          EXPAND_SH
+          chmod +x /usr/local/bin/auto-resize.sh
+
+          # 配置 Systemd 一次性自启扩容服务
+          cat << 'EXPAND' > /etc/systemd/system/auto-resize.service
           [Unit]
           Description=Expand root partition on first boot
           After=local-fs.target
 
           [Service]
           Type=oneshot
-          ExecStart=/bin/bash -c "DISK=\\\$(findmnt -n -o SOURCE / | sed -r 's/p?[0-9]+\\\$//'); PART=\\\$(findmnt -n -o SOURCE / | grep -o '[0-9]*\\\$'); growpart \\\$DISK \\\$PART || true; resize2fs /dev/disk/by-label/ROOTFS || true"
+          ExecStart=/usr/local/bin/auto-resize.sh
           RemainAfterExit=yes
 
           [Install]
           WantedBy=multi-user.target
           EXPAND
-          systemctl enable expand-root.service
+          systemctl enable auto-resize.service
           EOF
 
           echo "=== 5. 卸载虚拟文件系统与打包压缩 ==="
@@ -162,6 +176,7 @@ jobs:
             - 系统版本：Debian 12 (Bookworm)
             - 启动模式：UEFI + BIOS 双模
             - 驱动适配：AWS ENA / NVMe / KVM VirtIO
+            - 自动扩容：全盘自适应
             - 登录用户名：`root`
             - 初始密码：`${{ github.event.inputs.root_password }}`
           files: debian12-amd64.img.xz
