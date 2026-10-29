@@ -70,7 +70,6 @@ jobs:
           SOURCES
 
           apt-get update -y
-          # 补充 fdisk、gdisk 确保 growpart 底层支持 GPT 分区表扩容
           apt-get install -y --no-install-recommends \
             linux-image-cloud-amd64 grub-efi-amd64 grub-pc-bin openssh-server \
             systemd-resolved cloud-guest-utils fdisk gdisk curl
@@ -101,6 +100,31 @@ jobs:
           systemctl enable systemd-networkd
           systemctl enable systemd-resolved
 
+          # 写入黄金兼容版 BBR 与网络吞吐调优参数
+          cat << 'SYSCTL' > /etc/sysctl.d/99-bbr-tuning.conf
+          net.core.default_qdisc = fq
+          net.ipv4.tcp_congestion_control = bbr
+          net.core.somaxconn = 32768
+          net.ipv4.tcp_max_syn_backlog = 8192
+          net.core.rmem_max = 4194304
+          net.core.wmem_max = 4194304
+          net.ipv4.tcp_rmem = 4096 87380 4194304
+          net.ipv4.tcp_wmem = 4096 65536 4194304
+          net.ipv4.tcp_tw_reuse = 1
+          net.ipv4.tcp_fastopen = 3
+          net.ipv4.tcp_keepalive_time = 600
+          net.ipv4.tcp_keepalive_intvl = 30
+          net.ipv4.tcp_keepalive_probes = 3
+          SYSCTL
+
+          # 放开系统最大并发文件句柄限制
+          cat << 'LIMITS' > /etc/security/limits.d/99-nofile.conf
+          * soft nofile 1000000
+          * hard nofile 1000000
+          root soft nofile 1000000
+          root hard nofile 1000000
+          LIMITS
+
           # 挂载表
           cat << 'FSTAB' > /etc/fstab
           LABEL=ROOTFS    /           ext4    defaults,noatime    0 1
@@ -125,7 +149,7 @@ jobs:
           cp /boot/efi/EFI/debian/grubx64.efi /boot/efi/EFI/boot/bootx64.efi
           update-grub
 
-          # 单独创建开机扩容脚本，避免转义错误
+          # 单独创建开机自动扩容脚本
           cat << 'EXPAND_SH' > /usr/local/bin/auto-resize.sh
           #!/usr/bin/env bash
           ROOT_DEV=\$(findmnt -n -o SOURCE /)
@@ -139,7 +163,6 @@ jobs:
           EXPAND_SH
           chmod +x /usr/local/bin/auto-resize.sh
 
-          # 配置 Systemd 一次性自启扩容服务
           cat << 'EXPAND' > /etc/systemd/system/auto-resize.service
           [Unit]
           Description=Expand root partition on first boot
@@ -169,16 +192,9 @@ jobs:
       - name: 发布镜像至 GitHub Releases
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: debian12-${{ github.run_id }}
-          name: Debian 12 DD Image (Release ${{ github.run_id }})
-          body: |
-            ### 镜像构建信息
-            - 系统版本：Debian 12 (Bookworm)
-            - 启动模式：UEFI + BIOS 双模
-            - 驱动适配：AWS ENA / NVMe / KVM VirtIO
-            - 自动扩容：全盘自适应
-            - 登录用户名：`root`
-            - 初始密码：`${{ github.event.inputs.root_password }}`
+          tag_name: latest
+          name: Debian 12 DD Image (Latest)
+          prerelease: false
           files: debian12-amd64.img.xz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
