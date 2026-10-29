@@ -32,7 +32,7 @@ jobs:
 
           echo "=== 2. 创建 2.5GB 虚拟磁盘并规划 UEFI+BIOS 分区 ==="
           dd if=/dev/zero of=${IMAGE_NAME} bs=1M count=2560
-          LOOP_DEV=$(sudo losetup -Pf --show${IMAGE_NAME})
+          LOOP_DEV=$(sudo losetup -Pf --show ${IMAGE_NAME})
 
           sudo parted -s "$LOOP_DEV" mklabel gpt
           sudo parted -s "$LOOP_DEV" mkpart bios 1MiB 3MiB
@@ -133,7 +133,7 @@ jobs:
 
           [Service]
           Type=oneshot
-          ExecStart=/bin/bash -c "DISK=\\\$(findmnt -n -o SOURCE / \vert{} sed -r 's/p?[0-9]+\\\$//'); PART=\\\$(findmnt -n -o SOURCE / \vert{} grep -o '[0-9]*\\\$'); growpart \\\$DISK \\\$PART || true; resize2fs /dev/disk/by-label/ROOTFS || true"
+          ExecStart=/bin/bash -c "DISK=\\\$(findmnt -n -o SOURCE / | sed -r 's/p?[0-9]+\\\$//'); PART=\\\$(findmnt -n -o SOURCE / | grep -o '[0-9]*\\\$'); growpart \\\$DISK \\\$PART || true; resize2fs /dev/disk/by-label/ROOTFS || true"
           RemainAfterExit=yes
 
           [Install]
@@ -153,4 +153,17 @@ jobs:
           xz -z -9 -T0 "${IMAGE_NAME}"
 
       - name: 发布镜像至 GitHub Releases
-        uses
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: debian12-${{ github.run_id }}
+          name: Debian 12 DD Image (Release ${{ github.run_id }})
+          body: |
+            ### 镜像构建信息
+            - 系统版本：Debian 12 (Bookworm)
+            - 启动模式：UEFI + BIOS 双模
+            - 适配硬件：AWS ENA / NVMe / KVM VirtIO
+            - 登录用户名：`root`
+            - 初始密码：`${{ github.event.inputs.root_password }}`
+          files: debian12-amd64.img.xz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
